@@ -1,0 +1,27 @@
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.idea/
+TestResults/
+coverage/
+
+# MonoGame Content Pipeline artifacts
+Content/bin/
+Content/obj/
+*.mgstats
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local SQLite databases & local client config / publish bundles
+*.db
+*.db-wal
+*.db-shm
+client_config.json
+publish/
