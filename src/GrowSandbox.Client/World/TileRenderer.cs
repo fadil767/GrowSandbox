@@ -51,14 +51,18 @@ public sealed class TileRenderer
 
     private readonly PixelAtlas _atlas;
     private readonly PixelFont _font;
+    private readonly UiNineSlice _nineSlice;
+    private readonly UiFontManager _uiFonts;
     private readonly List<(int TileIndex, int TileX, int TileY)> _visibleTorches = new(32);
 
     public int LastDrawnTileCount { get; private set; }
 
-    public TileRenderer(PixelAtlas atlas, PixelFont font)
+    public TileRenderer(PixelAtlas atlas, PixelFont font, UiNineSlice nineSlice, UiFontManager uiFonts)
     {
         _atlas = atlas;
         _font = font;
+        _nineSlice = nineSlice;
+        _uiFonts = uiFonts;
     }
 
     /// <summary>
@@ -1204,69 +1208,230 @@ public sealed class TileRenderer
                 _atlas.PunchSlash,
                 new Rectangle(slashX, slashY, slashSize, slashSize),
                 null,
-                new Color((byte)255, (byte)255, (byte)255, slashAlpha),
+                Color.FromNonPremultiplied(255, 255, 255, slashAlpha),
                 0f,
                 Vector2.Zero,
                 flip,
                 0f);
         }
+    }
 
-        // 5. Nameplate pemain dengan latar pil gelap tipis (alpha 110) + 1px drop shadow tajam
-        Vector2 nameSize = _font.MeasureString(name, scale: 1);
-        int nameX = (int)MathF.Floor(centerX - nameSize.X * 0.5f);
-        int nameY = drawY - (isWorldOwner ? 24 : 14);
+    /// <summary>
+    /// Merender Nameplate pemain, Speech Bubble, dan Tree Tooltip dalam koordinat screen-space
+    /// menggunakan <see cref="UiNineSlice"/> dan <see cref="UiFontManager"/> (<see cref="SamplerState.LinearClamp"/>)
+    /// agar tipografi selalu super tajam & anti-aliased di semua level zoom kamera (1.0x-2.5x).
+    /// </summary>
+    public void DrawWorldOverlaysScreenSpace(
+        SpriteBatch spriteBatch,
+        Camera2D camera,
+        Viewport viewport,
+        PlayerController localPlayer,
+        string localPlayerName,
+        bool localIsOwner,
+        SpeechBubble? localBubble,
+        IReadOnlyDictionary<int, RemotePlayerState> remotePlayers,
+        string worldLockOwner,
+        IReadOnlyDictionary<int, TreeData> trees,
+        int hoveredTileX,
+        int hoveredTileY,
+        long utcNowTicks)
+    {
+        // 1. Nameplate & Speech Bubble seluruh pemain lain
+        foreach (RemotePlayerState remote in remotePlayers.Values)
+        {
+            bool isOwner = !string.IsNullOrEmpty(worldLockOwner) &&
+                           string.Equals(worldLockOwner, remote.Name, StringComparison.OrdinalIgnoreCase);
 
-        var pillRect = new Rectangle(nameX - 5, nameY - 2, (int)nameSize.X + 10, (int)nameSize.Y + 4);
-        UiDraw.RoundedRect(spriteBatch, _atlas.Pixel, pillRect, new Color(0, 0, 0, 110), radius: 3);
+            DrawPlayerOverlayScreenSpace(
+                spriteBatch,
+                camera,
+                viewport,
+                remote.RenderPosition.X,
+                remote.RenderPosition.Y,
+                remote.Name,
+                isOwner,
+                remote.ActiveBubble);
+        }
 
-        Color nameColor = isWorldOwner ? new Color(255, 234, 96) : Color.White;
-        _font.DrawString(spriteBatch, name, new Vector2(nameX, nameY), nameColor, scale: 1, dropShadow: true);
+        // 2. Nameplate & Speech Bubble pemain lokal di atas agar selalu jelas
+        if (localPlayer.IsSpawned)
+        {
+            DrawPlayerOverlayScreenSpace(
+                spriteBatch,
+                camera,
+                viewport,
+                localPlayer.PositionX,
+                localPlayer.PositionY,
+                localPlayerName,
+                localIsOwner,
+                localBubble);
+        }
 
-        // 6. Speech bubble membulat
+        // 3. Tooltip pohon yang diarahkan kursor
+        if (Tile.IsInBounds(hoveredTileX, hoveredTileY))
+        {
+            DrawTreeTooltipScreenSpace(spriteBatch, camera, viewport, trees, hoveredTileX, hoveredTileY, utcNowTicks);
+        }
+    }
+
+    private void DrawPlayerOverlayScreenSpace(
+        SpriteBatch spriteBatch,
+        Camera2D camera,
+        Viewport viewport,
+        float worldX,
+        float worldY,
+        string name,
+        bool isWorldOwner,
+        SpeechBubble? bubble)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return;
+        }
+
+        float centerX = worldX + PhysicsConstants.PlayerWidth * 0.5f;
+        float feetY = worldY + PhysicsConstants.PlayerHeight;
+        int spriteH = PixelAtlas.CharTexHeight * PixelAtlas.TexelScale; // 52
+        float headTopWorldY = feetY - spriteH - (isWorldOwner ? 14f : 4f);
+
+        Vector2 screenAnchor = camera.WorldToScreen(new Vector2(centerX, headTopWorldY));
+        if (screenAnchor.X < -160f || screenAnchor.X > viewport.Width + 160f ||
+            screenAnchor.Y < -140f || screenAnchor.Y > viewport.Height + 100f)
+        {
+            return;
+        }
+
+        // Pil nameplate halus dengan 9-slice PanelDark / PanelDarkGold + FontStashSharp 13px
+        Vector2 nameSize = _uiFonts.MeasureString(name, UiFontSize.Small);
+        const int padX = 9;
+        const int padY = 3;
+        int pillW = (int)MathF.Ceiling(nameSize.X) + padX * 2;
+        int pillH = (int)MathF.Ceiling(nameSize.Y) + padY * 2 + 2;
+        int pillX = (int)MathF.Floor(screenAnchor.X - pillW * 0.5f);
+        int pillY = (int)MathF.Floor(screenAnchor.Y - pillH - 4f);
+
+        var pillRect = new Rectangle(pillX, pillY, pillW, pillH);
+        _nineSlice.DrawPanel(
+            spriteBatch,
+            isWorldOwner ? UiPanelStyle.PanelDarkGold : UiPanelStyle.PanelDark,
+            pillRect,
+            alpha: 0.86f,
+            cornerSize: 7);
+
+        Color nameColor = isWorldOwner ? new Color(255, 238, 112) : Color.White;
+        _uiFonts.DrawCentered(
+            spriteBatch,
+            name,
+            new Rectangle(pillRect.X, pillRect.Y, pillRect.Width, pillRect.Height - 2),
+            nameColor,
+            UiFontSize.Small,
+            dropShadow: true);
+
+        // Speech bubble membulat halus tepat di atas nameplate
         if (bubble is not null && !string.IsNullOrWhiteSpace(bubble.Text))
         {
-            List<string> wrapped = _font.WrapText(bubble.Text, maxWidth: 168f, scale: 1);
+            List<string> wrapped = _uiFonts.WrapText(bubble.Text, maxWidth: 210f, UiFontSize.Small);
             int lineCount = Math.Min(3, wrapped.Count);
             float maxW = 0f;
             for (int i = 0; i < lineCount; i++)
             {
-                maxW = MathF.Max(maxW, _font.MeasureString(wrapped[i], scale: 1).X);
+                maxW = MathF.Max(maxW, _uiFonts.MeasureString(wrapped[i], UiFontSize.Small).X);
             }
 
-            int padX = 8;
-            int padY = 5;
-            int lineH = 10;
-            int boxW = (int)MathF.Ceiling(maxW) + padX * 2;
-            int boxH = lineCount * lineH + padY * 2 - 2;
-            int boxX = (int)MathF.Floor(centerX - boxW * 0.5f);
-            int boxY = nameY - boxH - 10;
+            const int bPadX = 11;
+            const int bPadY = 6;
+            int lineH = _uiFonts.GetLineHeight(UiFontSize.Small) + 1;
+            int boxW = Math.Max(36, (int)MathF.Ceiling(maxW) + bPadX * 2);
+            int boxH = lineCount * lineH + bPadY * 2 + 2;
+            int boxX = (int)MathF.Floor(screenAnchor.X - boxW * 0.5f);
+            int boxY = pillY - boxH - 10;
 
-            UiDraw.Panel(
-                spriteBatch,
-                _atlas.Pixel,
-                new Rectangle(boxX, boxY, boxW, boxH),
-                fill: new Color(252, 254, 255),
-                border: new Color(26, 48, 72),
-                thickness: 2,
-                radius: 6);
+            boxX = Math.Clamp(boxX, 8, Math.Max(8, viewport.Width - boxW - 8));
+            boxY = Math.Max(8, boxY);
 
-            int tailCenterX = (int)MathF.Floor(centerX);
-            spriteBatch.Draw(_atlas.Pixel, new Rectangle(tailCenterX - 4, boxY + boxH - 2, 8, 4), new Color(252, 254, 255));
-            spriteBatch.Draw(_atlas.Pixel, new Rectangle(tailCenterX - 4, boxY + boxH + 1, 2, 2), new Color(26, 48, 72));
-            spriteBatch.Draw(_atlas.Pixel, new Rectangle(tailCenterX + 2, boxY + boxH + 1, 2, 2), new Color(26, 48, 72));
-            spriteBatch.Draw(_atlas.Pixel, new Rectangle(tailCenterX - 2, boxY + boxH + 3, 4, 2), new Color(26, 48, 72));
+            var bubbleRect = new Rectangle(boxX, boxY, boxW, boxH);
+            _nineSlice.DrawPanel(spriteBatch, UiPanelStyle.SpeechBubble, bubbleRect, cornerSize: 9);
+
+            // Ekor kecil di bagian bawah bubble mengarah ke karakter
+            int tailX = Math.Clamp((int)MathF.Floor(screenAnchor.X), boxX + 12, boxX + boxW - 12);
+            spriteBatch.Draw(_atlas.Pixel, new Rectangle(tailX - 4, bubbleRect.Bottom - 5, 8, 5), new Color(242, 248, 253));
+            spriteBatch.Draw(_atlas.Pixel, new Rectangle(tailX - 4, bubbleRect.Bottom - 1, 2, 2), new Color(28, 54, 82));
+            spriteBatch.Draw(_atlas.Pixel, new Rectangle(tailX + 2, bubbleRect.Bottom - 1, 2, 2), new Color(28, 54, 82));
+            spriteBatch.Draw(_atlas.Pixel, new Rectangle(tailX - 2, bubbleRect.Bottom + 1, 4, 2), new Color(28, 54, 82));
 
             for (int i = 0; i < lineCount; i++)
             {
-                _font.DrawString(
+                _uiFonts.DrawString(
                     spriteBatch,
                     wrapped[i],
-                    new Vector2(boxX + padX, boxY + padY + i * lineH),
-                    new Color(22, 30, 42),
-                    scale: 1,
+                    new Vector2(boxX + bPadX, boxY + bPadY + i * lineH),
+                    new Color(22, 34, 48),
+                    UiFontSize.Small,
                     dropShadow: false);
             }
         }
+    }
+
+    private void DrawTreeTooltipScreenSpace(
+        SpriteBatch spriteBatch,
+        Camera2D camera,
+        Viewport viewport,
+        IReadOnlyDictionary<int, TreeData> trees,
+        int tileX,
+        int tileY,
+        long utcNowTicks)
+    {
+        int index = Tile.GetIndex(tileX, tileY);
+        if (!trees.TryGetValue(index, out TreeData tree))
+        {
+            return;
+        }
+
+        string treeName = ItemCatalog.TryGetSeedProperties(tree.SeedId, out SeedProperties props)
+            ? props.TreeName
+            : "Tree";
+        bool ready = tree.IsReady(utcNowTicks);
+        string statusLine;
+        if (ready)
+        {
+            statusLine = "READY TO HARVEST!";
+        }
+        else
+        {
+            int secs = Math.Max(1, (int)Math.Ceiling(tree.GetRemainingSeconds(utcNowTicks)));
+            statusLine = secs >= 60 ? $"{secs / 60}m {secs % 60:D2}s left" : $"{secs}s left";
+        }
+
+        Vector2 nameSize = _uiFonts.MeasureString(treeName, UiFontSize.Small);
+        Vector2 statusSize = _uiFonts.MeasureString(statusLine, UiFontSize.Tiny);
+        const int padX = 11;
+        const int padY = 6;
+        int boxW = (int)MathF.Ceiling(MathF.Max(nameSize.X, statusSize.X)) + padX * 2;
+        int boxH = (int)MathF.Ceiling(nameSize.Y + statusSize.Y) + padY * 2 + 4;
+
+        Vector2 anchorWorld = new(
+            tileX * WorldConstants.TileSize + WorldConstants.TileSize * 0.5f,
+            tileY * WorldConstants.TileSize);
+        Vector2 anchorScreen = camera.WorldToScreen(anchorWorld);
+
+        int boxX = (int)MathF.Floor(anchorScreen.X - boxW * 0.5f);
+        int boxY = (int)MathF.Floor(anchorScreen.Y - boxH - 10f);
+        boxX = Math.Clamp(boxX, 8, Math.Max(8, viewport.Width - boxW - 8));
+        boxY = Math.Max(8, boxY);
+
+        var rect = new Rectangle(boxX, boxY, boxW, boxH);
+        _nineSlice.DrawPanel(
+            spriteBatch,
+            ready ? UiPanelStyle.PanelDarkGold : UiPanelStyle.PanelDark,
+            rect,
+            alpha: 0.94f,
+            cornerSize: 8);
+
+        Color statusColor = ready ? new Color(126, 255, 148) : new Color(255, 232, 128);
+        float nameX = boxX + (boxW - nameSize.X) * 0.5f;
+        float statusX = boxX + (boxW - statusSize.X) * 0.5f;
+        _uiFonts.DrawString(spriteBatch, treeName, new Vector2(nameX, boxY + padY), Color.White, UiFontSize.Small);
+        _uiFonts.DrawString(spriteBatch, statusLine, new Vector2(statusX, boxY + padY + nameSize.Y + 1f), statusColor, UiFontSize.Tiny);
     }
 
     private void DrawCharacterGroundShadow(SpriteBatch spriteBatch, Tile[] tiles, float centerX, float feetY)

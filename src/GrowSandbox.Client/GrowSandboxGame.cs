@@ -28,6 +28,8 @@ public sealed class GrowSandboxGame : Game
     private SpriteBatch? _spriteBatch;
     private PixelAtlas? _atlas;
     private PixelFont? _font;
+    private UiNineSlice? _uiNineSlice;
+    private UiFontManager? _uiFonts;
     private TileRenderer? _tileRenderer;
     private HudRenderer? _hud;
     private AuthScreenRenderer? _authScreen;
@@ -67,6 +69,7 @@ public sealed class GrowSandboxGame : Game
     private int _wrenchPopupTargetPlayerId = -1;
     private string _wrenchPopupTargetName = string.Empty;
     private Point _lastMousePosition;
+    private bool _isLeftMouseDown;
 
     private const float WrenchPlayerReachPx = 4f * WorldConstants.TileSize;
     private const float WrenchPopupAutoCloseReachPx = 5.5f * WorldConstants.TileSize;
@@ -133,9 +136,11 @@ public sealed class GrowSandboxGame : Game
         _spriteBatch = new SpriteBatch(GraphicsDevice);
         _atlas = new PixelAtlas(GraphicsDevice);
         _font = new PixelFont(GraphicsDevice);
-        _tileRenderer = new TileRenderer(_atlas, _font);
-        _hud = new HudRenderer(_atlas, _font);
-        _authScreen = new AuthScreenRenderer(_atlas, _font);
+        _uiNineSlice = new UiNineSlice(GraphicsDevice);
+        _uiFonts = new UiFontManager(GraphicsDevice, _font);
+        _tileRenderer = new TileRenderer(_atlas, _font, _uiNineSlice, _uiFonts);
+        _hud = new HudRenderer(_atlas, _uiNineSlice, _uiFonts);
+        _authScreen = new AuthScreenRenderer(_atlas, _uiNineSlice, _uiFonts);
         _sfx = new SfxManager();
     }
 
@@ -157,6 +162,7 @@ public sealed class GrowSandboxGame : Game
         KeyboardState keyboard = Keyboard.GetState();
         MouseState mouse = Mouse.GetState();
         _lastMousePosition = mouse.Position;
+        _isLeftMouseDown = mouse.LeftButton == ButtonState.Pressed;
 
         _gameClient.PollEvents();
         _gameClient.UpdateTimers(dt);
@@ -1166,7 +1172,10 @@ public sealed class GrowSandboxGame : Game
             // Latar belakang langit gradasi, awan bergerak, dan bukit parallax hidup di balik layar Login/Register.
             _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp);
             _tileRenderer.DrawPass1SkyAndParallax(_spriteBatch, GraphicsDevice.Viewport, _menuCamera, _elapsedTime);
+            _spriteBatch.End();
 
+            // UI AuthMenu memakai SamplerState.LinearClamp agar panel 9-slice SDF & tipografi TTF silky-smooth.
+            _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp);
             var formState = new AuthFormViewState(
                 ActiveTab: _authTab,
                 FocusedField: _authFocusedField,
@@ -1179,7 +1188,13 @@ public sealed class GrowSandboxGame : Game
                 StatusMessage: _authStatusMessage,
                 IsErrorStatus: _authStatusIsError);
 
-            _authScreen.DrawAuthMenu(_spriteBatch, GraphicsDevice.Viewport, in formState, _elapsedTime);
+            _authScreen.DrawAuthMenu(
+                _spriteBatch,
+                GraphicsDevice.Viewport,
+                in formState,
+                _elapsedTime,
+                mousePosition: _lastMousePosition,
+                isLeftMouseDown: _isLeftMouseDown);
             _spriteBatch.End();
 
             base.Draw(gameTime);
@@ -1190,6 +1205,9 @@ public sealed class GrowSandboxGame : Game
         {
             _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp);
             _tileRenderer.DrawPass1SkyAndParallax(_spriteBatch, GraphicsDevice.Viewport, _menuCamera, _elapsedTime);
+            _spriteBatch.End();
+
+            _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp);
             _authScreen.DrawEnteringWorld(_spriteBatch, GraphicsDevice.Viewport, _enteringWorldName, _gameClient.LocalPlayerName, _elapsedTime);
             _spriteBatch.End();
 
@@ -1204,6 +1222,11 @@ public sealed class GrowSandboxGame : Game
         _spriteBatch.End();
 
         // Pass 2 (Background), Pass 3 (Drop Shadow 2.5D), & Pass 4 (Foreground + Outline + Entities)
+        long utcNowTicks = DateTime.UtcNow.Ticks;
+        bool localIsOwner = _gameClient.IsWorldLocked &&
+                            ((_gameClient.LockData.OwnerAccountId > 0 && _gameClient.LockData.OwnerAccountId == _gameClient.LocalAccountId) ||
+                             string.Equals(_gameClient.WorldLockOwner, _gameClient.LocalPlayerName, StringComparison.OrdinalIgnoreCase));
+
         _spriteBatch.Begin(
             sortMode: SpriteSortMode.Deferred,
             blendState: BlendState.AlphaBlend,
@@ -1212,7 +1235,6 @@ public sealed class GrowSandboxGame : Game
 
         if (_gameClient.HasWorldSnapshot)
         {
-            long utcNowTicks = DateTime.UtcNow.Ticks;
             _tileRenderer.DrawWorldPasses2To4(_spriteBatch, _gameClient.Tiles, _gameClient.Trees, _camera, _tileFeedback, _elapsedTime, utcNowTicks);
 
             if (Tile.IsInBounds(_hoveredTileX, _hoveredTileY))
@@ -1236,10 +1258,6 @@ public sealed class GrowSandboxGame : Game
 
             _tileRenderer.DrawRemotePlayers(_spriteBatch, _gameClient.Tiles, _gameClient.RemotePlayers, _gameClient.WorldLockOwner, _elapsedTime);
 
-            bool localIsOwner = _gameClient.IsWorldLocked &&
-                                ((_gameClient.LockData.OwnerAccountId > 0 && _gameClient.LockData.OwnerAccountId == _gameClient.LocalAccountId) ||
-                                 string.Equals(_gameClient.WorldLockOwner, _gameClient.LocalPlayerName, StringComparison.OrdinalIgnoreCase));
-
             _tileRenderer.DrawLocalPlayer(
                 _spriteBatch,
                 _gameClient.Tiles,
@@ -1248,11 +1266,6 @@ public sealed class GrowSandboxGame : Game
                 localIsOwner,
                 _gameClient.LocalSpeechBubble,
                 _elapsedTime);
-
-            if (Tile.IsInBounds(_hoveredTileX, _hoveredTileY))
-            {
-                _tileRenderer.DrawTreeTooltip(_spriteBatch, _gameClient.Trees, _hoveredTileX, _hoveredTileY, utcNowTicks);
-            }
 
             if (_font is not null)
             {
@@ -1272,9 +1285,27 @@ public sealed class GrowSandboxGame : Game
                 transformMatrix: _camera.GetViewMatrix());
             _tileRenderer.DrawLightingPass(_spriteBatch, _elapsedTime);
             _spriteBatch.End();
+
+            // Pass 4c: Nameplate pemain, Speech Bubble, & Tree Tooltip dalam screen-space smooth (LinearClamp)
+            _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp);
+            _tileRenderer.DrawWorldOverlaysScreenSpace(
+                _spriteBatch,
+                _camera,
+                GraphicsDevice.Viewport,
+                _playerController,
+                _gameClient.LocalPlayerName,
+                localIsOwner,
+                _gameClient.LocalSpeechBubble,
+                _gameClient.RemotePlayers,
+                _gameClient.WorldLockOwner,
+                _gameClient.Trees,
+                _hoveredTileX,
+                _hoveredTileY,
+                utcNowTicks);
+            _spriteBatch.End();
         }
 
-        // Pass 5 (Screen-space HUD + F3 Debug Overlay)
+        // Pass 5 (Screen-space HUD + F3 Debug Overlay: memisahkan LinearClamp untuk panel/font & PointClamp untuk ikon pixel-art)
         int playerTileX = (int)MathF.Floor(_playerController.CenterPosition.X / WorldConstants.TileSize);
         int playerTileY = (int)MathF.Floor(_playerController.CenterPosition.Y / WorldConstants.TileSize);
         var debugMetrics = new DebugMetrics(
@@ -1287,7 +1318,6 @@ public sealed class GrowSandboxGame : Game
             PlayerTileX: playerTileX,
             PlayerTileY: playerTileY);
 
-        _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp);
         _hud.Draw(
             _spriteBatch,
             GraphicsDevice.Viewport,
@@ -1300,8 +1330,8 @@ public sealed class GrowSandboxGame : Game
             isSfxMuted: _sfx?.IsMuted ?? false,
             _elapsedTime,
             mousePosition: _lastMousePosition,
+            isLeftMouseDown: _isLeftMouseDown,
             wrenchPlayerPopup: BuildWrenchPlayerPopupView());
-        _spriteBatch.End();
 
         base.Draw(gameTime);
     }
@@ -1853,6 +1883,8 @@ public sealed class GrowSandboxGame : Game
             _gameClient.TradeEndedReceived -= OnTradeEndedReceived;
             _gameClient.Dispose();
             _sfx?.Dispose();
+            _uiFonts?.Dispose();
+            _uiNineSlice?.Dispose();
             _atlas?.Dispose();
             _font?.Dispose();
             _spriteBatch?.Dispose();
