@@ -94,29 +94,60 @@ public sealed class TileRenderer
     }
 
     /// <summary>
-    /// Pass 1 (screen-space): Gradasi langit vertikal halus, matahari (0.05x),
-    /// 3 variasi awan (0.15x + drift kontinu), bukit jauh (0.25x), dan bukit dekat (0.45x).
-    /// Seluruh elemen langit digambar dengan skala texel seragam agar bebas mixels.
+    /// Pass 1 (screen-space): Gradasi langit vertikal halus, Matahari di langit terbuka dengan halo RadialGlowTexture,
+    /// 3 variasi awan (0.15x + drift kontinu), lapisan Atmospheric Haze lembut, bukit jauh (0.25x),
+    /// dan bukit dekat (0.45x) yang selalu menempel tepat ke garis SurfaceY setelah transformasi kamera + zoom.
     /// </summary>
     public void DrawPass1SkyAndParallax(SpriteBatch spriteBatch, Viewport viewport, Camera2D camera, float elapsedTime)
     {
-        // Gradasi langit vertikal halus dari atas ke cakrawala.
+        // 1. Gradasi langit vertikal halus dari atas ke cakrawala.
         spriteBatch.Draw(
             _atlas.SkyGradient,
             new Rectangle(0, 0, viewport.Width, viewport.Height),
             Color.White);
 
-        // Skala texel konsisten 2x (tepat sama dengan tile 16x16 -> 32x32) mengikuti zoom kamera.
-        float texelScale = PixelAtlas.TexelScale * camera.Zoom;
+        // Skala latar yang tetap tajam & proporsional di semua level zoom (1.0x..2.5x).
+        float hillScale = PixelAtlas.TexelScale * camera.Zoom;
+        float skyPropScale = PixelAtlas.TexelScale * Math.Clamp(0.75f + camera.Zoom * 0.25f, 0.95f, 1.40f);
         float worldCenterX = WorldConstants.WorldPixelWidth * 0.5f;
         float camOffsetX = camera.Position.X - worldCenterX;
 
-        // 1a. Matahari (parallax 0.05x terhadap kamera X)
-        int sunW = (int)MathF.Round(_atlas.Sun.Width * texelScale);
-        int sunH = (int)MathF.Round(_atlas.Sun.Height * texelScale);
-        int sunX = (int)MathF.Round(viewport.Width - sunW - 92f - camOffsetX * SunParallaxFactor);
-        int sunY = 24;
-        spriteBatch.Draw(_atlas.Sun, new Rectangle(sunX, sunY, sunW, sunH), Color.White);
+        // 1a. Matahari di area langit terbuka (~72% lebar layar, ~17% dari atas, aman dari panel HUD kanan atas)
+        //     dilengkapi halo cahaya hangat lembut memakai RadialGlowTexture.
+        int sunW = (int)MathF.Round(_atlas.Sun.Width * skyPropScale);
+        int sunH = (int)MathF.Round(_atlas.Sun.Height * skyPropScale);
+        float rawSunCenterX = viewport.Width * 0.72f - camOffsetX * SunParallaxFactor;
+        float maxSafeSunCenterX = MathF.Max(viewport.Width * 0.55f, viewport.Width - 265f);
+        float sunCenterX = Math.Clamp(rawSunCenterX, viewport.Width * 0.52f, maxSafeSunCenterX);
+        float sunCenterY = MathF.Max(88f, viewport.Height * 0.17f);
+
+        int outerHaloSize = (int)MathF.Round(sunW * 3.1f);
+        int innerHaloSize = (int)MathF.Round(sunW * 1.9f);
+        spriteBatch.Draw(
+            _atlas.RadialGlowTexture,
+            new Rectangle(
+                (int)MathF.Round(sunCenterX - outerHaloSize * 0.5f),
+                (int)MathF.Round(sunCenterY - outerHaloSize * 0.5f),
+                outerHaloSize,
+                outerHaloSize),
+            Color.FromNonPremultiplied(255, 244, 184, 88));
+        spriteBatch.Draw(
+            _atlas.RadialGlowTexture,
+            new Rectangle(
+                (int)MathF.Round(sunCenterX - innerHaloSize * 0.5f),
+                (int)MathF.Round(sunCenterY - innerHaloSize * 0.5f),
+                innerHaloSize,
+                innerHaloSize),
+            Color.FromNonPremultiplied(255, 232, 128, 76));
+
+        spriteBatch.Draw(
+            _atlas.Sun,
+            new Rectangle(
+                (int)MathF.Round(sunCenterX - sunW * 0.5f),
+                (int)MathF.Round(sunCenterY - sunH * 0.5f),
+                sunW,
+                sunH),
+            Color.White);
 
         // 1b. Awan 3 variasi (parallax 0.15x + bergerak pelan ke kanan secara kontinu dengan wrapping otomatis)
         float wrapSpan = MathF.Max(viewport.Width + 320f, 1760f);
@@ -124,8 +155,8 @@ public sealed class TileRenderer
         {
             (int baseX, int y, int variant) = CloudLayout[i];
             Texture2D cloudTex = _atlas.CloudVariants[variant % _atlas.CloudVariants.Length];
-            int cw = (int)MathF.Round(cloudTex.Width * texelScale);
-            int ch = (int)MathF.Round(cloudTex.Height * texelScale);
+            int cw = (int)MathF.Round(cloudTex.Width * skyPropScale);
+            int ch = (int)MathF.Round(cloudTex.Height * skyPropScale);
 
             float rawX = baseX + elapsedTime * CloudDriftSpeedPxPerSec - camera.Position.X * CloudParallaxFactor;
             float wrappedX = ((rawX % wrapSpan) + wrapSpan) % wrapSpan - cw;
@@ -133,23 +164,46 @@ public sealed class TileRenderer
             spriteBatch.Draw(cloudTex, new Rectangle((int)MathF.Round(wrappedX), y, cw, ch), Color.White);
         }
 
-        // Hitung posisi layar garis permukaan tanah (WorldConstants.SurfaceY) agar bukit menempel rapi di atas permukaan.
+        // Hitung posisi layar tepat garis permukaan tanah (WorldConstants.SurfaceY) menggunakan transformasi kamera + zoom.
         float surfaceWorldY = WorldConstants.SurfaceY * WorldConstants.TileSize;
-        float surfaceScreenY = (surfaceWorldY - camera.Position.Y) * camera.Zoom + viewport.Height * 0.5f;
+        float surfaceScreenY = camera.WorldToScreen(new Vector2(camera.Position.X, surfaceWorldY)).Y;
 
-        if (surfaceScreenY > -200f)
+        if (surfaceScreenY > -260f)
         {
-            // 1c. Bukit jauh hijau kebiruan pudar (parallax 0.25x)
-            int farW = (int)MathF.Round(_atlas.HillsFar.Width * texelScale);
-            int farH = (int)MathF.Round(_atlas.HillsFar.Height * texelScale);
+            int horizonAnchorY = (int)MathF.Round(surfaceScreenY + 12f * camera.Zoom);
+
+            // 1c. Lapisan Atmospheric Haze belakang (memudar dari garis cakrawala ke atas di belakang bukit jauh)
+            int backHazeH = (int)MathF.Round(135f * camera.Zoom);
+            spriteBatch.Draw(
+                _atlas.AtmosphericHaze,
+                new Rectangle(0, horizonAnchorY - backHazeH, viewport.Width, backHazeH),
+                Color.White * 0.85f);
+
+            // 1d. Bukit jauh hijau kebiruan pudar (parallax 0.25x), menempel erat pada SurfaceY
+            int farW = (int)MathF.Round(_atlas.HillsFar.Width * hillScale);
+            int farH = (int)MathF.Round(_atlas.HillsFar.Height * hillScale);
             int farTopY = (int)MathF.Round(surfaceScreenY - farH + 14f * camera.Zoom);
             DrawHorizontalParallaxStrip(spriteBatch, _atlas.HillsFar, viewport.Width, farTopY, farW, farH, camera.Position.X * FarHillsParallaxFactor);
 
-            // 1d. Bukit dekat hijau lebih cerah (parallax 0.45x), menempel rapi di atas garis permukaan tanah
-            int nearW = (int)MathF.Round(_atlas.HillsNear.Width * texelScale);
-            int nearH = (int)MathF.Round(_atlas.HillsNear.Height * texelScale);
+            // 1e. Lapisan Atmospheric Haze tengah (di antara bukit jauh & bukit dekat untuk kedalaman udara alami)
+            int midHazeH = (int)MathF.Round(96f * camera.Zoom);
+            spriteBatch.Draw(
+                _atlas.AtmosphericHaze,
+                new Rectangle(0, horizonAnchorY - midHazeH, viewport.Width, midHazeH),
+                Color.White);
+
+            // 1f. Bukit dekat hijau lebih cerah (parallax 0.45x), menempel rapat pada SurfaceY
+            int nearW = (int)MathF.Round(_atlas.HillsNear.Width * hillScale);
+            int nearH = (int)MathF.Round(_atlas.HillsNear.Height * hillScale);
             int nearTopY = (int)MathF.Round(surfaceScreenY - nearH + 8f * camera.Zoom);
             DrawHorizontalParallaxStrip(spriteBatch, _atlas.HillsNear, viewport.Width, nearTopY, nearW, nearH, camera.Position.X * NearHillsParallaxFactor);
+
+            // 1g. Kabut horizon tipis di depan bukit dekat agar foreground blok & karakter makin menonjol
+            int frontHazeH = (int)MathF.Round(52f * camera.Zoom);
+            spriteBatch.Draw(
+                _atlas.AtmosphericHaze,
+                new Rectangle(0, horizonAnchorY - frontHazeH, viewport.Width, frontHazeH),
+                Color.White * 0.45f);
         }
     }
 
@@ -198,12 +252,8 @@ public sealed class TileRenderer
         }
 
         int tileSize = WorldConstants.TileSize;
-        Rectangle visible = camera.GetVisibleWorldBounds();
-
-        int minX = Math.Clamp((int)MathF.Floor((float)visible.Left / tileSize), 0, WorldConstants.Width - 1);
-        int maxX = Math.Clamp((int)MathF.Ceiling((float)visible.Right / tileSize) - 1, 0, WorldConstants.Width - 1);
-        int minY = Math.Clamp((int)MathF.Floor((float)visible.Top / tileSize), 0, WorldConstants.Height - 1);
-        int maxY = Math.Clamp((int)MathF.Ceiling((float)visible.Bottom / tileSize) - 1, 0, WorldConstants.Height - 1);
+        // Frustum Culling dinamis langsung dari sudut kiri-atas & kanan-bawah viewport hasil transformasi kamera (+ margin 2 tile)
+        (int minX, int maxX, int minY, int maxY) = camera.GetVisibleTileRange(marginTiles: 2);
 
         if (minX > maxX || minY > maxY)
         {

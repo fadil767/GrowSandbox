@@ -104,10 +104,10 @@ public sealed class GrowSandboxGame : Game
     {
         Window.Title = "GrowSandbox";
 
-        _camera = new Camera2D(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-        _camera.CenterOnTile(WorldConstants.Width / 2, 29);
+        _camera = new Camera2D(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height, Camera2D.DefaultZoom);
+        _camera.CenterOnTile(WorldConstants.Width / 2, WorldConstants.SurfaceY - 1);
 
-        _menuCamera = new Camera2D(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+        _menuCamera = new Camera2D(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height, initialZoom: 1.25f);
         _menuCamera.CenterOnTile(WorldConstants.Width / 2, 26);
 
         // Muat hanya LastUsername dan LastServerAddress dari client_config.json (tidak pernah menyimpan password).
@@ -429,10 +429,11 @@ public sealed class GrowSandboxGame : Game
         if (_camera is not null)
         {
             HandleScrollWheel(keyboard, mouse, dt, movementBlocked);
+            _camera.UpdateZoom(dt);
 
             if (_playerController.IsSpawned)
             {
-                _camera.Follow(_playerController.CenterPosition, dt, smoothSpeed: 12f);
+                _camera.FollowWithLookAhead(_playerController.CenterPosition, _playerController.VelocityX, dt);
             }
 
             UpdateInGameMouseInteractions(mouse, keyboard);
@@ -572,17 +573,21 @@ public sealed class GrowSandboxGame : Game
             return;
         }
 
-        Keys[] slotKeys =
-        [
-            Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5,
-            Keys.D6, Keys.D7, Keys.D8, Keys.D9, Keys.D0,
-        ];
-        for (int i = 0; i < slotKeys.Length; i++)
+        bool ctrlHeld = keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl);
+        if (!ctrlHeld)
         {
-            if (IsKeyJustPressed(keyboard, slotKeys[i]))
+            Keys[] slotKeys =
+            [
+                Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5,
+                Keys.D6, Keys.D7, Keys.D8, Keys.D9, Keys.D0,
+            ];
+            for (int i = 0; i < slotKeys.Length; i++)
             {
-                _hud.SelectedSlotIndex = i;
-                break;
+                if (IsKeyJustPressed(keyboard, slotKeys[i]))
+                {
+                    _hud.SelectedSlotIndex = i;
+                    break;
+                }
             }
         }
 
@@ -750,6 +755,7 @@ public sealed class GrowSandboxGame : Game
             return;
         }
 
+        bool pointerOverHud = _hud?.IsPointerOverHud(mouse.Position) ?? false;
         int scrollDelta = mouse.ScrollWheelValue - _previousMouse.ScrollWheelValue;
         if (scrollDelta != 0)
         {
@@ -757,21 +763,26 @@ public sealed class GrowSandboxGame : Game
             {
                 _hud.ScrollChat(MathF.Sign(scrollDelta));
             }
-            else if (!movementBlocked)
+            else if (!movementBlocked && !pointerOverHud)
             {
-                _camera.Zoom += MathF.Sign(scrollDelta) * 0.1f;
+                _camera.AdjustTargetZoom(MathF.Sign(scrollDelta) * Camera2D.ZoomStep);
             }
         }
 
         if (!movementBlocked)
         {
-            if (keyboard.IsKeyDown(Keys.OemPlus) || keyboard.IsKeyDown(Keys.Add))
+            bool ctrlDown = keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl);
+            if (ctrlDown && (IsKeyJustPressed(keyboard, Keys.D0) || IsKeyJustPressed(keyboard, Keys.NumPad0)))
             {
-                _camera.Zoom += 1.0f * dt;
+                _camera.ResetZoom();
             }
-            else if (keyboard.IsKeyDown(Keys.OemMinus) || keyboard.IsKeyDown(Keys.Subtract))
+            else if (IsKeyJustPressed(keyboard, Keys.OemPlus) || IsKeyJustPressed(keyboard, Keys.Add))
             {
-                _camera.Zoom -= 1.0f * dt;
+                _camera.AdjustTargetZoom(Camera2D.ZoomStep);
+            }
+            else if (IsKeyJustPressed(keyboard, Keys.OemMinus) || IsKeyJustPressed(keyboard, Keys.Subtract))
+            {
+                _camera.AdjustTargetZoom(-Camera2D.ZoomStep);
             }
         }
     }
@@ -1389,8 +1400,8 @@ public sealed class GrowSandboxGame : Game
         _playerController.SpawnAtTile(spawnTileX, spawnTileY);
         if (_camera is not null)
         {
-            _camera.Position = _playerController.CenterPosition;
-            _camera.ClampPosition();
+            // Langsung snap kamera ke titik spawn world baru tanpa animasi lerp panjang.
+            _camera.SnapTo(_playerController.CenterPosition);
         }
 
         if (_hud is not null)

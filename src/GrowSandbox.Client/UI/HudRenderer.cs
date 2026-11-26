@@ -110,6 +110,8 @@ public sealed class HudRenderer
     private readonly PixelFont _font;
 
     private Rectangle _chatToggleRect;
+    private Rectangle _worldPanelRect;
+    private Rectangle _gemPillRect;
     private Rectangle _chatLogRect;
     private Rectangle _chatInputRect;
     private Rectangle _warpButtonRect;
@@ -344,7 +346,10 @@ public sealed class HudRenderer
 
         return _inviteBannerRect.Contains(mousePosition)
             || _playerPopupRect.Contains(mousePosition)
+            || _worldPanelRect.Contains(mousePosition)
+            || _gemPillRect.Contains(mousePosition)
             || _chatToggleRect.Contains(mousePosition)
+            || _chatLogRect.Contains(mousePosition)
             || _chatInputRect.Contains(mousePosition)
             || _warpButtonRect.Contains(mousePosition)
             || _menuButtonRect.Contains(mousePosition)
@@ -717,6 +722,7 @@ public sealed class HudRenderer
         int panelW = Math.Max(188, contentW + padX * 2);
         int panelH = padY + (int)titleSize.Y + 5 + (int)statusSize.Y + padY;
         var worldPanel = new Rectangle(_chatToggleRect.Right + 8, margin, panelW, panelH);
+        _worldPanelRect = worldPanel;
 
         DrawGtPanel(spriteBatch, worldPanel, GtPanelDarkTranslucent, client.IsWorldLocked ? GtGoldBorder : GtBorderSubtle, topHighlightAlpha: 48);
 
@@ -922,6 +928,7 @@ public sealed class HudRenderer
         Vector2 gemTextSize = _font.MeasureString(gemsText, scale: 2);
         int gemPillW = Math.Max(114, (int)gemTextSize.X + 52);
         var gemPill = new Rectangle(_warpButtonRect.X - gemPillW - 8, y + 1, gemPillW, 36);
+        _gemPillRect = gemPill;
 
         DrawGtPanel(spriteBatch, gemPill, GtPanelDarkTranslucent, GtBorderSubtle, topHighlightAlpha: 48);
         spriteBatch.Draw(_atlas.GemIcon, new Rectangle(gemPill.X + 8, gemPill.Y + 6, 24, 24), Color.White);
@@ -1429,7 +1436,7 @@ public sealed class HudRenderer
         spriteBatch.Draw(_atlas.Pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(8, 18, 30, 150));
 
         const int w = 444;
-        const int h = 352;
+        const int h = 368;
         int x = (viewport.Width - w) / 2;
         int y = (viewport.Height - h) / 2;
         _modalPanelRect = new Rectangle(x, y, w, h);
@@ -1456,6 +1463,7 @@ public sealed class HudRenderer
             "  Right-Click   : Place selected block/wall/seed",
             "  ENTER / TAB   : Chat / Warp World",
             "  M / F3        : Mute SFX / Debug Overlay",
+            "  Scroll/Ctrl+0 : Zoom (1.0x-2.5x) / Reset 1.75x",
         ];
 
         for (int i = 0; i < lines.Length; i++)

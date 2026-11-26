@@ -50,6 +50,7 @@ public sealed class PixelAtlas : IDisposable
 
     public Texture2D Pixel { get; }
     public Texture2D SkyGradient { get; }
+    public Texture2D AtmosphericHaze { get; }
     public Texture2D Sun { get; }
     public Texture2D[] CloudVariants { get; }
     public Texture2D HillsFar { get; }
@@ -88,6 +89,7 @@ public sealed class PixelAtlas : IDisposable
 
         Pixel = Register(CreateSinglePixel(gd, Color.White));
         SkyGradient = Register(CreateSkyGradient(gd, 1, 256));
+        AtmosphericHaze = Register(CreateAtmosphericHazeGradient(gd, 1, 128));
 
         Sun = Register(CreateSunTexture(gd, 44));
         CloudVariants =
@@ -738,6 +740,28 @@ public sealed class PixelAtlas : IDisposable
                 ? Color.Lerp(zenith, midSky, t / 0.52f)
                 : Color.Lerp(midSky, horizon, (t - 0.52f) / 0.48f);
 
+            for (int x = 0; x < width; x++)
+            {
+                pixels[y * width + x] = c;
+            }
+        }
+
+        return MakeTex(gd, width, height, pixels);
+    }
+
+    /// <summary>
+    /// Gradasi kabut atmosfer vertikal biru-putih lembut (alpha 0 di atas -> ~52 di garis cakrawala)
+    /// dalam format premultiplied agar bukit jauh &amp; dekat menyatu halus dengan langit.
+    /// </summary>
+    private static Texture2D CreateAtmosphericHazeGradient(GraphicsDevice gd, int width, int height)
+    {
+        var pixels = new Color[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            float t = (float)y / (height - 1);
+            float curve = t * t;
+            byte a = (byte)Math.Clamp((int)MathF.Round(curve * 52f), 0, 52);
+            Color c = Color.FromNonPremultiplied(214, 242, 255, a);
             for (int x = 0; x < width; x++)
             {
                 pixels[y * width + x] = c;
