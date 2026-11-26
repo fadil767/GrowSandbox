@@ -23,30 +23,41 @@ $versionTag = "$commitSha-$((Get-Date).ToString('yyyyMMddHHmm'))"
 
 Write-Host "[2/4] Publish Release win-x64 client (versi $versionTag)..." -ForegroundColor Cyan
 $pubRoot = Join-Path $RootDir 'publish'
-$stageDir = Join-Path $pubRoot 'GrowSandbox-Client-stage'
+$stageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("GrowSandboxRelease_" + [Guid]::NewGuid().ToString('N'))
+$stageDir = Join-Path $stageRoot 'GrowSandbox-Client'
 $finalDir = Join-Path $pubRoot 'GrowSandbox-Client'
 $zipPath = Join-Path $pubRoot 'GrowSandbox-Client-win64.zip'
 $versionFile = Join-Path $pubRoot 'version.txt'
 
-Remove-Item -Recurse -Force $stageDir -ErrorAction SilentlyContinue
-dotnet publish (Join-Path $RootDir 'src\GrowSandbox.Client\GrowSandbox.Client.csproj') `
-    -c Release -r win-x64 --self-contained true `
-    -p:DebugType=None -p:DebugSymbols=false `
-    -o $stageDir
-if ($LASTEXITCODE -ne 0) { throw 'dotnet publish gagal.' }
+New-Item -ItemType Directory -Path $pubRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 
-# Salin file pendukung dari packaging/ + tulis version.txt
-Copy-Item -Path (Join-Path $RootDir 'packaging\*') -Destination $stageDir -Force
-Set-Content -Path (Join-Path $stageDir 'version.txt') -Value $versionTag -NoNewline -Encoding UTF8
-Set-Content -Path $versionFile -Value $versionTag -NoNewline -Encoding UTF8
+try {
+    dotnet publish (Join-Path $RootDir 'src\GrowSandbox.Client\GrowSandbox.Client.csproj') `
+        -c Release -r win-x64 --self-contained true `
+        -p:DebugType=None -p:DebugSymbols=false `
+        -o $stageDir
+    if ($LASTEXITCODE -ne 0) { throw 'dotnet publish gagal.' }
 
-Remove-Item -Recurse -Force $finalDir -ErrorAction SilentlyContinue
-Rename-Item -Path $stageDir -NewName 'GrowSandbox-Client'
+    # Salin file pendukung dari packaging/ + tulis version.txt
+    Copy-Item -Path (Join-Path $RootDir 'packaging\*') -Destination $stageDir -Force
+    Set-Content -Path (Join-Path $stageDir 'version.txt') -Value $versionTag -NoNewline -Encoding UTF8
+    Set-Content -Path $versionFile -Value $versionTag -NoNewline -Encoding UTF8
 
-Write-Host '[3/4] Membuat arsip GrowSandbox-Client-win64.zip...' -ForegroundColor Cyan
-Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($finalDir, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+    Write-Host '[3/4] Membuat arsip GrowSandbox-Client-win64.zip...' -ForegroundColor Cyan
+    Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($stageDir, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+
+    # Sinkronkan juga folder publish\GrowSandbox-Client (best-effort jika tidak sedang dibuka di Explorer)
+    try {
+        New-Item -ItemType Directory -Path $finalDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $stageDir '*') -Destination $finalDir -Recurse -Force -ErrorAction SilentlyContinue
+    } catch { }
+}
+finally {
+    Remove-Item -Recurse -Force $stageRoot -ErrorAction SilentlyContinue
+}
 
 Write-Host '[4/4] Mengunggah ke GitHub Releases (tag: latest)...' -ForegroundColor Cyan
 $releaseNotes = @"
