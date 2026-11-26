@@ -5,8 +5,13 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+if (-not (Get-Command git -ErrorAction SilentlyContinue) -and (Test-Path 'C:\Program Files\Git\cmd\git.exe')) {
+    $env:PATH = "C:\Program Files\Git\cmd;$env:PATH"
+}
+
+$Repo = 'fadil767/GrowSandbox'
 $RootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$GitExe = if (Get-Command git -ErrorAction SilentlyContinue) { 'git' } else { 'C:\Program Files\Git\cmd\git.exe' }
+$GitExe = 'git'
 
 Set-Location $RootDir
 
@@ -68,18 +73,22 @@ Build otomatis GrowSandbox Client (`win-x64`, self-contained).
 - **Cara Update untuk Teman:** Cukup klik dua kali ``Update_dan_Main.bat`` di dalam folder game, atau unduh ulang ``GrowSandbox-Client-win64.zip`` di bawah.
 "@
 
-$exists = $true
-gh release view latest 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) { $exists = $false }
+$prevPref = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$null = & gh release view latest --repo $Repo 2>&1
+$exists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $prevPref
 
 if ($exists) {
-    gh release edit latest --title "GrowSandbox Latest ($commitSha)" --notes $releaseNotes --latest
-    gh release upload latest $zipPath $versionFile --clobber
+    & gh release edit latest --repo $Repo --title "GrowSandbox Latest ($commitSha)" --notes $releaseNotes --latest
+    if ($LASTEXITCODE -ne 0) { throw 'Edit GitHub Release gagal.' }
+    & gh release upload latest $zipPath $versionFile --repo $Repo --clobber
+    if ($LASTEXITCODE -ne 0) { throw 'Upload asset GitHub Release gagal.' }
 }
 else {
-    gh release create latest $zipPath $versionFile --title "GrowSandbox Latest ($commitSha)" --notes $releaseNotes --latest
+    & gh release create latest $zipPath $versionFile --repo $Repo --title "GrowSandbox Latest ($commitSha)" --notes $releaseNotes --latest
+    if ($LASTEXITCODE -ne 0) { throw 'Create GitHub Release gagal.' }
 }
-if ($LASTEXITCODE -ne 0) { throw 'Upload GitHub Release gagal.' }
 
 Write-Host ''
 Write-Host 'SUKSES! Rilis terbaru sudah live di GitHub Releases:' -ForegroundColor Green
