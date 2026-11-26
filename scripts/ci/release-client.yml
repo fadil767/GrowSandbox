@@ -1,0 +1,86 @@
+name: Build & Publish Client Release
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'packaging/**'
+      - 'GrowSandbox.sln'
+      - '.github/workflows/release-client.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-client:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Run unit tests
+        run: dotnet test GrowSandbox.sln -c Release
+
+      - name: Publish self-contained win-x64 client
+        run: |
+          dotnet publish src/GrowSandbox.Client/GrowSandbox.Client.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:DebugType=None -p:DebugSymbols=false `
+            -o publish/GrowSandbox-Client
+
+      - name: Package GrowSandbox-Client-win64.zip & version.txt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+          $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmm')
+          $versionTag = "$shortSha-$stamp"
+
+          Copy-Item -Path packaging/* -Destination publish/GrowSandbox-Client -Force
+          $noBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText((Join-Path (Resolve-Path publish/GrowSandbox-Client).Path 'version.txt'), $versionTag, $noBom)
+          [System.IO.File]::WriteAllText((Join-Path (Resolve-Path publish).Path 'version.txt'), $versionTag, $noBom)
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            (Resolve-Path publish/GrowSandbox-Client).Path,
+            (Join-Path (Resolve-Path publish).Path 'GrowSandbox-Client-win64.zip'),
+            [System.IO.Compression.CompressionLevel]::Optimal,
+            $true
+          )
+
+          "SHORT_SHA=$shortSha" >> $env:GITHUB_ENV
+          "VERSION_TAG=$versionTag" >> $env:GITHUB_ENV
+
+      - name: Upload to GitHub Releases (latest)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $commitSubject = (git log -1 --pretty=%s).Trim()
+          $notes = @"
+          Build otomatis GrowSandbox Client (``win-x64``, self-contained).
+
+          - **Commit:** ``$env:SHORT_SHA`` — $commitSubject
+          - **Versi:** ``$env:VERSION_TAG``
+          - **Cara Update untuk Teman:** Cukup klik dua kali ``Update_dan_Main.bat`` di folder game, atau unduh ulang ``GrowSandbox-Client-win64.zip``.
+          "@
+
+          $exists = $true
+          gh release view latest 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) { $exists = $false }
+
+          if ($exists) {
+            gh release edit latest --title "GrowSandbox Latest ($env:SHORT_SHA)" --notes $notes --latest
+            gh release upload latest publish/GrowSandbox-Client-win64.zip publish/version.txt --clobber
+          } else {
+            gh release create latest publish/GrowSandbox-Client-win64.zip publish/version.txt `
+              --title "GrowSandbox Latest ($env:SHORT_SHA)" --notes $notes --latest
+          }

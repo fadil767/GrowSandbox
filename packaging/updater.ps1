@@ -14,12 +14,18 @@ Write-Host '  GROWSANDBOX AUTO-UPDATER & LAUNCHER   ' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host ''
 
-$localVersion = if (Test-Path $LocalVersionFile) { (Get-Content $LocalVersionFile -Raw).Trim() } else { '' }
+function Get-CleanVersion([object]$raw) {
+    if ($null -eq $raw) { return '' }
+    # Buang BOM / karakter aneh agar perbandingan versi selalu akurat
+    return ([string]$raw -replace '[^0-9A-Za-z\-\.]', '')
+}
+
+$localVersion = if (Test-Path $LocalVersionFile) { Get-CleanVersion ([System.IO.File]::ReadAllText($LocalVersionFile)) } else { '' }
 
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Write-Host 'Memeriksa update terbaru dari GitHub...' -ForegroundColor Gray
-    $remoteVersion = (Invoke-RestMethod -Uri $VersionUrl -TimeoutSec 8).ToString().Trim()
+    $remoteVersion = Get-CleanVersion (Invoke-RestMethod -Uri $VersionUrl -TimeoutSec 8)
 
     if (-not [string]::IsNullOrWhiteSpace($remoteVersion) -and $remoteVersion -ne $localVersion) {
         Write-Host "Update baru ditemukan! ($remoteVersion)" -ForegroundColor Yellow
@@ -58,7 +64,7 @@ try {
                 Copy-Item -Path $_.FullName -Destination (Join-Path $AppDir $_.Name) -Recurse -Force
             }
 
-            Set-Content -Path $LocalVersionFile -Value $remoteVersion -NoNewline -Encoding UTF8
+            [System.IO.File]::WriteAllText($LocalVersionFile, $remoteVersion, (New-Object System.Text.UTF8Encoding($false)))
             Write-Host 'Update selesai! Menjalankan GrowSandbox...' -ForegroundColor Green
         }
         finally {
