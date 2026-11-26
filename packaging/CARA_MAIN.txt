@@ -1,0 +1,35 @@
+========================================
+  GROWSANDBOX - PANDUAN BERMAIN
+========================================
+
+1. Ekstrak seluruh isi file ZIP ini ke dalam satu folder
+   (jangan langsung dijalankan dari dalam file ZIP).
+
+2. Klik dua kali: Update_dan_Main.bat  (DISARANKAN!)
+   * Otomatis mengecek & mengunduh update terbaru dari GitHub
+     setiap kali ada perbaikan, lalu langsung menjalankan game.
+   * Username & pengaturan Anda di client_config.json tidak akan hilang.
+   * Alternatif tanpa cek update: klik GrowSandbox.Client.exe langsung.
+   * Tidak perlu install .NET (sudah termasuk di dalam paket).
+   * Jika muncul peringatan Windows SmartScreen
+     ("Windows protected your PC"), klik "More info" -> "Run anyway".
+
+3. Login / Buat Akun:
+   * Pastikan kolom SERVER (IP:PORT) berisi:
+     stallion-hills.tun.ply.gg:11872
+   * Klik tab REGISTER -> masukkan Username (3-16 karakter) & Password
+     (min 6 karakter) -> klik CREATE ACCOUNT.
+
+4. Kontrol Utama:
+   * A / D + SPACE   : Jalan & Lompat
+   * 1 (Fist)        : Klik kiri untuk pukul blok / panen pohon matang
+   * 2 (Wrench)      : Klik tile (Lock/Tree) atau klik pemain lain untuk TRADE
+   * 3 - 0 / E       : Pilih blok, seed, atau World Lock
+   * Klik Kanan      : Pasang blok / dinding / tanam seed
+   * Q               : Buang 1 item yang dipilih ke lantai
+   * I / B           : Buka / tutup laci inventory
+   * Scroll / Ctrl+0 : Zoom kamera (1.0x - 2.5x) / Reset ke 1.75x
+   * ENTER / T       : Chat (ketik /join <WORLD> atau /trade <USERNAME>)
+   * TAB             : Warp pindah world
+   * M / F3          : Mute SFX / Debug FPS
+   * ESC             : Menu / Logout / Batal Trade

@@ -6,6 +6,7 @@ obj/
 *.userosscache
 *.sln.docstates
 .vs/
+.vscode/
 .idea/
 TestResults/
 coverage/
